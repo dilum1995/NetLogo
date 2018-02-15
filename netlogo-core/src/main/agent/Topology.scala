@@ -98,12 +98,12 @@ abstract class Topology(val world: World, val xWraps: Boolean, val yWraps: Boole
   // 4. x + r >= w                    (wraps above w - 1)
   // - EH 2/11/2018
 
-  def getRegion(X: Int, Y: Int, R: Int): ArrayList[(Int, Int)] = {
+  def getRegion(initialX: Int, initialY: Int, initialR: Int): ArrayList[(Int, Int)] = {
 
     // translate from Netlogo coordinates to array indices
-    val x: Int = X - world.minPxcor
-    val y: Int = world.worldHeight - 1 - (Y - world.minPycor)
-    val r: Int = R
+    val x: Int = initialX - world.minPxcor
+    val y: Int = world.worldHeight - 1 - (initialY - world.minPycor)
+    val r: Int = initialR
 
     val ans: ArrayList[(Int, Int)] = new ArrayList()
 
