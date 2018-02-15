@@ -4,7 +4,7 @@ package org.nlogo.agent
 
 import org.nlogo.api.AgentException
 import org.nlogo.core.AgentKind
-import java.util.{ArrayList, HashSet => JHashSet, List => JList}
+import java.util.{ArrayList, LinkedHashSet, HashSet => JHashSet, List => JList}
 
 class InRadiusOrCone private[agent](val world: World2D) extends World.InRadiusOrCone {
   private var patches: Array[Patch] = null // world.patches is not defined when this class is initiated
@@ -17,23 +17,31 @@ class InRadiusOrCone private[agent](val world: World2D) extends World.InRadiusOr
   override def inRadius(agent: Agent, sourceSet: AgentSet, radius: Double, wrap: Boolean): JList[Agent] = {
     val (worldWidth, worldHeight) = (world.worldWidth, world.worldHeight)
     val result = new ArrayList[Agent]
-    var startX, startY, gRoot = .0
+    var gRoot = .0
     var dx, dy, i = 0
-
-    // set agent coordinates startX and startY
-    if (agent.isInstanceOf[Turtle]) {
-      val startTurtle = agent.asInstanceOf[Turtle]
-      startX = startTurtle.xcor
-      startY = startTurtle.ycor
+    val centerPatch = agent match {
+      case t: Turtle => t.currentPatch
+      case p: Patch => p
     }
-    else {
-      val startPatch = agent.asInstanceOf[Patch]
-      startX = startPatch.pxcor
-      startY = startPatch.pycor
+    // set agent coordinates startX, startY, patchX, patchY
+    val (startX, startY, patchX, patchY) = agent match {
+      case t: Turtle => {
+        (t.xcor, t.ycor, centerPatch.pxcor, centerPatch.pycor)
+      }
+      case p: Patch => {
+        (p.pxcor.toDouble, p.pycor.toDouble, p.pxcor, p.pycor)
+      }
     }
 
     val cachedIDs = initCachedIDs(sourceSet)
-    setPatches(startX, startY, radius)
+    initPatches()
+    if (radius <= 1 && radius > 0) { // use getNeighbors to get patches in this case
+      setPatches1(centerPatch)
+    } else if (radius <= 2) {
+      setPatches2(centerPatch)
+    } else {
+      setPatches(startX, startY, radius)
+    }
 
     if (sourceSet.kind eq AgentKind.Patch) {
       val sourceSetIsWorldPatches = sourceSet eq world.patches
@@ -42,7 +50,7 @@ class InRadiusOrCone private[agent](val world: World2D) extends World.InRadiusOr
         val patch = patches(i)
 
         if ((sourceSetIsWorldPatches || cachedIDs.contains(patch.id))
-            && world.protractor.distance(patch.pxcor, patch.pycor, startX, startY, wrap) <= radius) {
+          && world.protractor.distance(patch.pxcor, patch.pycor, startX, startY, wrap) <= radius) {
           result.add(patch)
         }
 
@@ -51,16 +59,18 @@ class InRadiusOrCone private[agent](val world: World2D) extends World.InRadiusOr
     } else if (sourceSet.kind eq AgentKind.Turtle) {
       val sourceSetIsWorldTurtles = sourceSet eq world.turtles
       val sourceSetIsBreedSet = sourceSet.isBreedSet
+      val worldWidth2 = worldWidth / 2
+      val worldHeight2 = worldHeight / 2
 
       while (i < end) {
         val patch = patches(i)
 
-        dx = Math.abs(patch.pxcor - startX.toInt)
-        if (dx > worldWidth / 2)
+        dx = Math.abs(patch.pxcor - patchX)
+        if (dx > worldWidth2)
           dx = worldWidth - dx
 
-        dy = Math.abs(patch.pycor - startY.toInt)
-        if (dy > worldHeight / 2)
+        dy = Math.abs(patch.pycor - patchY)
+        if (dy > worldHeight2)
           dy = worldHeight - dy
 
         gRoot = world.rootsTable.gridRoot(dx * dx + dy * dy)
@@ -122,7 +132,14 @@ class InRadiusOrCone private[agent](val world: World2D) extends World.InRadiusOr
     var dx, dy, i = 0
 
     val cachedIDs = initCachedIDs(sourceSet)
-    setPatches(startTurtle.xcor, startTurtle.ycor, radius)
+    initPatches()
+    if (radius <= 1 && radius > 0) { // use getNeighbors to get patches in this case
+      setPatches1(startTurtle.currentPatch)
+    } else if (radius <= 2) {
+      setPatches2(startTurtle.currentPatch)
+    } else {
+      setPatches(startTurtle.xcor, startTurtle.ycor, radius)
+    }
 
     // create and filter world offsets based on startTurtle position.
     // x offset from -m to m and y offset from -n to n.
@@ -165,16 +182,18 @@ class InRadiusOrCone private[agent](val world: World2D) extends World.InRadiusOr
     } else {
       val sourceSetIsWorldTurtles = sourceSet eq world.turtles
       val sourceSetIsBreedSet = sourceSet.isBreedSet
+      val worldWidth2 = worldWidth / 2
+      val worldHeight2 = worldHeight / 2
 
       while (i < end) {
         val patch = patches(i)
 
-        dx = Math.abs(patch.pxcor - startTurtle.xcor.toInt)
-        if (dx > worldWidth / 2)
+        dx = Math.abs(patch.pxcor - startTurtle.currentPatch.pxcor)
+        if (dx > worldWidth2)
           dx = worldWidth - dx
 
-        dy = Math.abs(patch.pycor - startTurtle.ycor.toInt)
-        if (dy > worldHeight / 2)
+        dy = Math.abs(patch.pycor - startTurtle.currentPatch.pycor)
+        if (dy > worldHeight2)
           dy = worldHeight - dy
 
         gRoot = world.rootsTable.gridRoot(dx * dx + dy * dy)
@@ -263,28 +282,99 @@ class InRadiusOrCone private[agent](val world: World2D) extends World.InRadiusOr
     (diff <= half) || ((360 - diff) <= half)
   }
 
+  private def initPatches(): Unit = {
+    if (patches eq null) {
+      patches = new Array[Patch](world.patches.count)
+    }
+  }
+
+  // special case of setPatches for radius <= 1
+  private def setPatches1(centerPatch: Patch): Unit = {
+    val neighbors = centerPatch.getNeighbors.asInstanceOf[ArrayAgentSet].array
+    var i = 0
+
+    patches(0) = centerPatch
+    while (i < neighbors.length) {
+      patches(i + 1) = neighbors(i).asInstanceOf[Patch]
+      i += 1
+    }
+
+    end = i + 1
+  }
+
+  // special case of setPatches for radius <= 2
+  private def setPatches2(centerPatch: Patch): Unit = {
+    setPatches1(centerPatch)
+
+    // because of how we're adding to allNeighbors, there should never be any duplicates, except
+    // when the world is very small.
+    val allNeighbors = new LinkedHashSet[Patch]
+
+    // only need to add and getNeighbors for corners. i = 0 is the original centerPatch,
+    // and i = [1,4] is N,E,S,W.
+    var i = 0
+    while (i < end) {
+      val p = patches(i)
+      allNeighbors.add(p)
+
+      i match {
+        case 5 => { // NorthEast
+          allNeighbors.add(p.getPatchNorth)
+          allNeighbors.add(p.getPatchNorthEast)
+          allNeighbors.add(p.getPatchEast)
+          allNeighbors.add(p.getPatchSouthEast)
+        }
+        case 6 => { // SouthEast
+          allNeighbors.add(p.getPatchEast)
+          allNeighbors.add(p.getPatchSouthEast)
+          allNeighbors.add(p.getPatchSouth)
+          allNeighbors.add(p.getPatchSouthWest)
+        }
+        case 7 => { // SouthWest
+          allNeighbors.add(p.getPatchSouth)
+          allNeighbors.add(p.getPatchSouthWest)
+          allNeighbors.add(p.getPatchWest)
+          allNeighbors.add(p.getPatchNorthWest)
+        }
+        case 8 => { // NorthWest
+          allNeighbors.add(p.getPatchWest)
+          allNeighbors.add(p.getPatchNorthWest)
+          allNeighbors.add(p.getPatchNorth)
+          allNeighbors.add(p.getPatchNorthEast)
+        }
+        case _ =>
+      }
+      i += 1
+    }
+
+    i = 0
+    val allNeighborsIterator = allNeighbors.iterator
+    while (allNeighborsIterator.hasNext) {
+      patches(i) = allNeighborsIterator.next()
+      i += 1
+    }
+
+    end = i
+  }
+
   // helper method to copy relevant patches
   private def setPatches(X: Double, Y: Double, R: Double): Unit = {
+    // initialize patches only once for this class.
+
     val x = X.toInt
     val y = Y.toInt
     val r = if (x != X || y != Y) R.toInt + 1 else R.toInt
 
-    val regionIterator = world.topology.getRegion(x,y,r).iterator
-
-    var curr = 0
-
-    // initialize patches only once for this class.
-    if (patches eq null) {
-      patches = new Array[Patch](world.patches.count)
-    }
+    val regionIterator = world.topology.getRegion(x, y, r).iterator
+    var length, curr = 0
+    var region = (0, 0)
 
     val worldPatches = world.patches.asInstanceOf[ArrayAgentSet].array
 
     while (regionIterator.hasNext) {
-      val region = regionIterator.next()
-      val (r1, r2) = (region._1, region._2)
-      val length = r2 - r1
-      System.arraycopy(worldPatches, r1, patches, curr, length)
+      region = regionIterator.next()
+      length = region._2 - region._1
+      System.arraycopy(worldPatches, region._1, patches, curr, length)
       curr += length
     }
 
